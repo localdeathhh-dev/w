@@ -18,7 +18,7 @@
 const JB_KEY   = '$2a$10$8TvNm1wETog3LgHDfTikb.ib2CaUg1KD.V6QYar8EqP0UgDaPv1HS';   // Master Key из Account → API Keys
 const JB_BIN_PRODUCTS  = '6a874e29f5f4af5e292e21a6';  // bin ID для товаров
 const JB_BIN_ORDERS    = '6a874e6ada38895dfefc8e9f';     // bin ID для заказов
-const JB_BIN_CONFIG    = '6a874e84f5f4af5e292e22d6';     // bin ID для бот-конфига
+const JB_BIN_CONFIG    = '6a874e84f5f4af5e292e22d6';     // bin ID для бот
 
 const JB_BASE = 'https://api.jsonbin.io/v3/b';
 const JB_HDR  = {'Content-Type':'application/json','X-Master-Key':JB_KEY,'X-Bin-Meta':'false'};
@@ -111,42 +111,28 @@ async function sbSaveFavorites(userId,ids){
 
 /* ===== INIT ===== */
 async function initSupabaseData(){
-  /* Products — общая база JSONBin */
   const sbProds=await sbGetProducts();
-  if(sbProds&&sbProds.length){
-    products=sbProds;
+  const realProds=Array.isArray(sbProds)?sbProds.filter(p=>p&&p.id&&p.title):[];
+  if(realProds.length){
+    products=realProds;
     localStorage.setItem('products',JSON.stringify(products));
   } else {
     products=JSON.parse(localStorage.getItem('products')||'null')||defaultProducts;
     await sbSaveProducts(products);
   }
-  /* Orders — общая база JSONBin */
   const sbOrds=await sbGetOrders();
-  if(sbOrds!==null){
-    localStorage.setItem('orders',JSON.stringify(sbOrds));
-  }
-  /* Settings — localStorage */
+  const realOrds=Array.isArray(sbOrds)?sbOrds.filter(o=>o&&o.id):[];
+  localStorage.setItem('orders',JSON.stringify(realOrds));
   const uid=getTgUserId();
   const sbSet=await sbGetSettings(uid);
-  if(sbSet){
-    Object.assign(settings,sbSet);
-    localStorage.setItem('appSettings',JSON.stringify(settings));
-  }
-  /* Bot config — JSONBin */
+  if(sbSet){Object.assign(settings,sbSet);localStorage.setItem('appSettings',JSON.stringify(settings));}
   const sbBot=await sbGetBotConfig();
-  if(sbBot){
+  if(sbBot&&typeof sbBot==='object'&&!sbBot.init){
     localStorage.setItem('botConfig',JSON.stringify({token:sbBot.token||'',chatId:sbBot.chat_id||''}));
   }
-  /* Favorites — localStorage */
   const sbFavs=await sbGetFavorites(uid);
-  if(sbFavs&&sbFavs.length){
-    localStorage.setItem('favorites',JSON.stringify(sbFavs));
-  }
-
-  renderProducts();
-  applySettings();
-  renderOrders();
-  updateNavBadge();
+  if(sbFavs&&sbFavs.length){localStorage.setItem('favorites',JSON.stringify(sbFavs));}
+  renderProducts();applySettings();renderOrders();updateNavBadge();
 }
 </script>
 <style>
@@ -761,6 +747,15 @@ body.no-shadow .nav-highlight{box-shadow:none;}
           </div>
         </div>
 
+      <div class="bot-config-banner" style="margin-top:16px;">
+          <h4>🗄️ База данных JSONBin</h4>
+          <p>Принудительно перезаписать товары/заказы в JSONBin из текущего localStorage. Используй если данные рассинхронизировались.</p>
+          <div style="display:flex;gap:10px;margin-top:12px;">
+            <button class="bot-save-btn" onclick="forceSync()">🔄 Синхронизировать</button>
+            <button class="bot-save-btn" style="background:rgba(255,60,60,.15);color:#ff6060;" onclick="nukeProducts()">🗑️ Сбросить товары</button>
+          </div>
+          <div id="syncStatus" style="margin-top:8px;font-size:.8rem;color:var(--muted);font-family:var(--font-body);"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1078,11 +1073,12 @@ const defaultProducts=[
     specs:[{k:'Объём',v:'2 мл'},{k:'Совместимость',v:'Универсальная'}],
     variantLabel:'Комплектация',variants:[{name:'1 шт',stock:30},{name:'3 шт',stock:14}]},
 ];
-function getProducts(){return JSON.parse(localStorage.getItem('products')||'null')||defaultProducts;}
+function getProducts(){const raw=JSON.parse(localStorage.getItem('products')||'null');return(Array.isArray(raw)?raw.filter(p=>p&&p.id&&p.title):null)||defaultProducts;}
 function saveProducts(p){
-  localStorage.setItem('products',JSON.stringify(p));
-  /* Синхронизируем в Supabase (fire-and-forget) */
-  sbSaveProducts(p).catch(e=>console.warn(e));
+  /* Фильтруем мусор перед сохранением */
+  const clean=p.filter(x=>x&&x.id&&x.title);
+  localStorage.setItem('products',JSON.stringify(clean));
+  sbSaveProducts(clean).catch(e=>console.warn(e));
 }
 let products=getProducts();
 
@@ -1274,7 +1270,7 @@ function saveEditProduct(id){
   const pi=document.getElementById('eprev-'+id);
   if(pi.dataset.newPhoto)prod.photo=pi.dataset.newPhoto;
   const specRows=[...document.getElementById('es-list-'+id).querySelectorAll('.spec-edit-row')];
-  prod.specs=specRows.map(row=>{const ins=[...row.querySelectorAll('input')];return{k:ins[0].value.trim(),v:ins[1].value.trim()};}).filter(s=>s.k);
+  prod.specs=specRows.map(row=>{const ins=[...row.querySelectorAll('input')];return{k:(ins[0]&&ins[0].value.trim())||'',v:(ins[1]&&ins[1].value.trim())||''};}).filter(s=>s.k);
   saveProducts(p);products=p;renderAdminProducts();renderProducts();
   setTimeout(()=>document.getElementById('edit-'+id)?.classList.add('open'),50);
   showToast('Товар сохранён ✓');
@@ -1358,10 +1354,10 @@ function saveNewProduct(){
   const badge=document.getElementById('np-badge').value.trim();
   const variantLabel=document.getElementById('np-varLabel').value.trim()||'Вариант';
   const varRows=[...document.getElementById('np-variants-wrap').querySelectorAll('.spec-edit-row')];
-  const variants=varRows.map(r=>{const ins=[...r.querySelectorAll('input')];return{name:ins[0].value.trim(),stock:parseInt(ins[1].value)||0};}).filter(v=>v.name);
+  const variants=varRows.map(r=>{const ins=[...r.querySelectorAll('input')];return{name:(ins[0]&&ins[0].value.trim())||'',stock:parseInt((ins[1]&&ins[1].value)||'0')||0};}).filter(v=>v.name);
   if(!variants.length)variants.push({name:'Стандарт',stock:0});
   const specRows=[...document.getElementById('np-specs-wrap').querySelectorAll('.spec-edit-row')];
-  const specs=specRows.map(r=>{const ins=[...r.querySelectorAll('input')];return{k:ins[0].value.trim(),v:ins[1].value.trim()};}).filter(s=>s.k&&s.v);
+  const specs=specRows.map(r=>{const ins=[...r.querySelectorAll('input')];return{k:(ins[0]&&ins[0].value.trim())||'',v:(ins[1]&&ins[1].value.trim())||''};}).filter(s=>s.k);
   const p=getProducts();
   const newId=Math.max(0,...p.map(x=>x.id))+1;
   p.push({id:newId,title,desc,price,category,badge,photo:newProductPhoto,variantLabel,variants,specs});
@@ -1410,7 +1406,7 @@ async function changeOrderStatus(id,newStatus){
   if(!o)return;
   const oldStatus=o.status;
   o.status=newStatus;
-  saveOrders(orders);
+  saveOrders(orders);/* JSONBin синхронизируется через saveOrders→sbSaveAllOrders */
 
   /* ===== ВЫЧИТАЕМ ОСТАТКИ ПРИ ОПЛАТЕ ===== */
   if(newStatus==='paid'&&oldStatus!=='paid'){
@@ -1513,7 +1509,7 @@ async function submitOrder(){
     address:deliveryType==='delivery'?address:'',time,status:'processing',
     clientTgId:tgUser?.id||null
   };
-  const orders=getOrders();orders.unshift(order);saveOrders(orders);
+  const orders=getOrders();orders.unshift(order);saveOrders(orders);sbSaveOrder(order).catch(e=>console.warn(e));
   saveCart([]);renderCart();closeOrderModal();
   ['orderName','orderPhone','orderTime','orderAddress'].forEach(id=>document.getElementById(id).value='');
   haptic('success');showToast('Резерв оформлен ✓');
@@ -1700,10 +1696,11 @@ function renderCart(){
 }
 
 /* ===== ORDERS ===== */
-function getOrders(){return JSON.parse(localStorage.getItem('orders')||'[]');}
+function getOrders(){const raw=JSON.parse(localStorage.getItem('orders')||'[]');return Array.isArray(raw)?raw.filter(o=>o&&o.id):[];}
 function saveOrders(o){
-  localStorage.setItem('orders',JSON.stringify(o));
-  sbSaveAllOrders(o).catch(e=>console.warn(e));
+  const clean=Array.isArray(o)?o.filter(x=>x&&x.id):[];
+  localStorage.setItem('orders',JSON.stringify(clean));
+  sbSaveAllOrders(clean).catch(e=>console.warn(e));
 }
 function renderOrders(){
   const orders=getOrders();const wrap=document.getElementById('ordersList');
@@ -1811,6 +1808,30 @@ let grainFrame=0;
 function animateGrain(){
   grainFrame++;if(grainFrame%2===0){const img=ctx.createImageData(W,H);const buf=img.data;for(let i=0;i<buf.length;i+=4){const v=Math.random()*255;buf[i]=v;buf[i+1]=v;buf[i+2]=v;buf[i+3]=14;}ctx.putImageData(img,0,0);}
   rafId=requestAnimationFrame(animateGrain);
+}
+
+/* ===== FORCE SYNC / NUKE ===== */
+async function forceSync(){
+  const st=document.getElementById('syncStatus');
+  st.textContent='Синхронизация...';
+  try{
+    await sbSaveProducts(getProducts());
+    await sbSaveAllOrders(getOrders());
+    st.textContent='✓ Синхронизировано успешно';
+    showToast('Синхронизация выполнена ✓');
+  }catch(e){st.textContent='Ошибка: '+e.message;}
+}
+async function nukeProducts(){
+  if(!confirm('Удалить все товары из JSONBin и загрузить дефолтные?'))return;
+  const st=document.getElementById('syncStatus');
+  st.textContent='Сброс...';
+  localStorage.removeItem('products');
+  products=defaultProducts;
+  await sbSaveProducts(defaultProducts);
+  localStorage.setItem('products',JSON.stringify(defaultProducts));
+  renderProducts();renderAdminProducts();
+  st.textContent='✓ Товары сброшены на дефолтные';
+  showToast('Товары сброшены ✓');
 }
 
 /* ===== INIT ===== */
