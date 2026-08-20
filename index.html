@@ -19,6 +19,7 @@ const JB_KEY   = '$2a$10$8TvNm1wETog3LgHDfTikb.ib2CaUg1KD.V6QYar8EqP0UgDaPv1HS';
 const JB_BIN_PRODUCTS  = '6a874e29f5f4af5e292e21a6';  // bin ID для товаров
 const JB_BIN_ORDERS    = '6a874e6ada38895dfefc8e9f';     // bin ID для заказов
 const JB_BIN_CONFIG    = '6a874e84f5f4af5e292e22d6';     // bin ID для бот
+const JB_BIN_BLOCKED='6a875631da38895dfefcaa90';
 
 const JB_BASE = 'https://api.jsonbin.io/v3/b';
 const JB_HDR  = {'Content-Type':'application/json','X-Master-Key':JB_KEY,'X-Bin-Meta':'false'};
@@ -659,6 +660,7 @@ body.no-shadow .nav-highlight{box-shadow:none;}
       <button class="admin-tab" onclick="switchAdminTab('orders',this)">📋 Заказы</button>
       <button class="admin-tab" onclick="switchAdminTab('accounting',this)">💰 Бухгалтерия</button>
       <button class="admin-tab" onclick="switchAdminTab('botconfig',this)">🤖 Бот</button>
+      <button class="admin-tab" onclick="switchAdminTab('users',this)">🚫 Пользователи</button>
     </div>
     <div class="admin-content">
       <!-- PRODUCTS -->
@@ -755,6 +757,18 @@ body.no-shadow .nav-highlight{box-shadow:none;}
             <button class="bot-save-btn" style="background:rgba(255,60,60,.15);color:#ff6060;" onclick="nukeProducts()">🗑️ Сбросить товары</button>
           </div>
           <div id="syncStatus" style="margin-top:8px;font-size:.8rem;color:var(--muted);font-family:var(--font-body);"></div>
+        </div>
+      </div>
+      <!-- USERS -->
+      <div class="admin-section" id="admin-users">
+        <div class="bot-config-banner">
+          <h4>🚫 Блокировка пользователей</h4>
+          <p>Заблокированные пользователи видят экран блокировки и не могут оформить заказ.</p>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <input class="bot-config-input" id="blockUsername" placeholder="@username или Telegram ID" style="flex:1;">
+            <button class="bot-save-btn" onclick="blockUser()">Заблокировать</button>
+          </div>
+          <div id="blockedList" style="margin-top:16px;"></div>
         </div>
       </div>
     </div>
@@ -866,8 +880,6 @@ body.no-shadow .nav-highlight{box-shadow:none;}
       <div class="menu-row" onclick="goTo('favorites')"><div class="m-icon">♥</div><div class="m-label">Избранное</div><div class="chevron">›</div></div>
       <div class="menu-row" onclick="goTo('settings')"><div class="m-icon">⚙</div><div class="m-label">Настройки</div><div class="chevron">›</div></div>
     </div>
-    <div class="section-title"><span class="dot"></span>История заказов</div>
-    <div id="ordersList"></div>
   </div>
 
   <!-- SETTINGS -->
@@ -1135,7 +1147,7 @@ function goTo(name){
   document.getElementById('productCta').style.display=name==='product'?'flex':'none';
   document.getElementById('cartSummary').style.display='none';
   if(name==='cart')renderCart();
-  if(name==='profile')renderOrders();
+  /* profile: история заказов удалена */
   if(name==='favorites')renderFavorites();
   if(name==='settings')segmentedUpdaters.forEach(u=>u(false));
 }
@@ -1185,6 +1197,7 @@ function switchAdminTab(name,btn){
   if(name==='orders')renderAdminOrders();
   if(name==='accounting')renderAccounting();
   if(name==='botconfig')loadBotConfigUI();
+  if(name==='users')loadUsersTab();
 }
 
 /* ===== ADMIN PRODUCTS ===== */
@@ -1823,6 +1836,75 @@ function animateGrain(){
   rafId=requestAnimationFrame(animateGrain);
 }
 
+/* ===== BLOCKED USERS ===== */
+const JB_BIN_BLOCKED='ЗАМЕНИТЕ_BIN_ID_BLOCKED';/* Создайте ещё один бин {"blocked":[]} */
+
+async function getBlockedList(){
+  try{
+    const d=await jbGet(JB_BIN_BLOCKED);
+    return(d&&Array.isArray(d.blocked))?d.blocked:[];
+  }catch(e){return JSON.parse(localStorage.getItem('_blocked')||'[]');}
+}
+async function saveBlockedList(list){
+  localStorage.setItem('_blocked',JSON.stringify(list));
+  await jbPutQueued(JB_BIN_BLOCKED,{blocked:list});
+}
+
+async function checkBlocked(){
+  const user=window.Telegram?.WebApp?.initDataUnsafe?.user;
+  if(!user)return;
+  const list=await getBlockedList();
+  const id=String(user.id);
+  const uname=(user.username||'').toLowerCase();
+  const isBlocked=list.some(b=>b.id===id||b.username.toLowerCase()===uname);
+  if(isBlocked){
+    document.getElementById('app').style.display='none';
+    const el=document.createElement('div');
+    el.className='blocked-screen';
+    el.innerHTML=`<div class="b-icon">🚫</div><h2>Доступ закрыт</h2><p>Ваш аккаунт заблокирован администратором.<br>Свяжитесь с поддержкой если считаете это ошибкой.</p>`;
+    document.body.appendChild(el);
+  }
+}
+
+async function blockUser(){
+  const val=document.getElementById('blockUsername').value.trim();
+  if(!val){showToast('Введите username или ID');return;}
+  const list=await getBlockedList();
+  const isId=/^\d+$/.test(val);
+  const entry=isId?{id:val,username:'',label:val}:{id:'',username:val.replace('@',''),label:val};
+  if(list.some(b=>b.label===entry.label)){showToast('Уже заблокирован');return;}
+  list.push(entry);
+  await saveBlockedList(list);
+  document.getElementById('blockUsername').value='';
+  renderBlockedList(list);
+  showToast('Пользователь заблокирован 🚫');
+}
+
+async function unblockUser(label){
+  const list=(await getBlockedList()).filter(b=>b.label!==label);
+  await saveBlockedList(list);
+  renderBlockedList(list);
+  showToast('Пользователь разблокирован ✓');
+}
+
+function renderBlockedList(list){
+  const wrap=document.getElementById('blockedList');
+  if(!list||!list.length){
+    wrap.innerHTML='<div style="color:var(--muted);font-size:.82rem;padding:12px 0;font-family:var(--font-body);">Нет заблокированных пользователей</div>';
+    return;
+  }
+  wrap.innerHTML=list.map(b=>`
+    <div class="blocked-user-row">
+      <span class="blocked-user-name">🚫 ${b.label}</span>
+      <button class="unblock-btn" onclick="unblockUser('${b.label.replace(/'/g,"\'")}')">Разблокировать</button>
+    </div>`).join('');
+}
+
+async function loadUsersTab(){
+  const list=await getBlockedList();
+  renderBlockedList(list);
+}
+
 /* ===== FORCE SYNC / NUKE ===== */
 async function forceSync(){
   const st=document.getElementById('syncStatus');
@@ -1853,6 +1935,7 @@ renderProducts();applySettings();updateNavBadge();
 requestAnimationFrame(()=>{updateNavHighlight(false);updateTabsHighlight(false);});
 /* Асинхронно синхронизируем с JSONBin */
 initSupabaseData().catch(e=>console.warn('JSONBin init error:',e));
+checkBlocked().catch(e=>console.warn('checkBlocked error:',e));
 </script>
 </body>
 </html>
