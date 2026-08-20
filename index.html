@@ -9,6 +9,130 @@
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ===== SUPABASE CONFIG ===== */
+/* 🔧 ЗАМЕНИТЕ НА СВОИ ДАННЫЕ ИЗ SUPABASE → Project Settings → API */
+const SUPABASE_URL = 'https://fizstpcmnpxpjaopsrcd.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_qQUH_IzDlKCXS4yQMn75sQ_9xST3czj';
+const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* Telegram user id (используется как ключ настроек пользователя) */
+function getTgUserId(){
+  return String(window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'guest');
+}
+
+/* ===== SUPABASE HELPERS ===== */
+
+/* --- PRODUCTS --- */
+async function sbGetProducts(){
+  const {data,error}=await _supabase.from('products').select('*').order('id');
+  if(error){console.warn('sbGetProducts error',error);return null;}
+  return data;
+}
+async function sbSaveProducts(arr){
+  /* upsert всего массива */
+  const {error}=await _supabase.from('products').upsert(arr,{onConflict:'id'});
+  if(error)console.warn('sbSaveProducts error',error);
+}
+async function sbDeleteProduct(id){
+  const {error}=await _supabase.from('products').delete().eq('id',id);
+  if(error)console.warn('sbDeleteProduct error',error);
+}
+async function sbUpsertProduct(prod){
+  const {error}=await _supabase.from('products').upsert(prod,{onConflict:'id'});
+  if(error)console.warn('sbUpsertProduct error',error);
+}
+
+/* --- ORDERS --- */
+async function sbGetOrders(){
+  const {data,error}=await _supabase.from('orders').select('*').order('id',{ascending:false});
+  if(error){console.warn('sbGetOrders error',error);return null;}
+  return data;
+}
+async function sbSaveOrder(order){
+  const {error}=await _supabase.from('orders').upsert(order,{onConflict:'id'});
+  if(error)console.warn('sbSaveOrder error',error);
+}
+async function sbSaveAllOrders(arr){
+  const {error}=await _supabase.from('orders').upsert(arr,{onConflict:'id'});
+  if(error)console.warn('sbSaveAllOrders error',error);
+}
+
+/* --- SETTINGS (per-user) --- */
+async function sbGetSettings(userId){
+  const {data,error}=await _supabase.from('user_settings').select('settings').eq('user_id',userId).single();
+  if(error){if(error.code!=='PGRST116')console.warn('sbGetSettings error',error);return null;}
+  return data?.settings||null;
+}
+async function sbSaveSettings(userId,settingsObj){
+  const {error}=await _supabase.from('user_settings').upsert({user_id:userId,settings:settingsObj},{onConflict:'user_id'});
+  if(error)console.warn('sbSaveSettings error',error);
+}
+
+/* --- BOT CONFIG --- */
+async function sbGetBotConfig(){
+  const {data,error}=await _supabase.from('bot_config').select('*').eq('id',1).single();
+  if(error){if(error.code!=='PGRST116')console.warn('sbGetBotConfig error',error);return null;}
+  return data||null;
+}
+async function sbSaveBotConfig(cfg){
+  const {error}=await _supabase.from('bot_config').upsert({id:1,...cfg},{onConflict:'id'});
+  if(error)console.warn('sbSaveBotConfig error',error);
+}
+
+/* --- FAVORITES (per-user) --- */
+async function sbGetFavorites(userId){
+  const {data,error}=await _supabase.from('favorites').select('product_ids').eq('user_id',userId).single();
+  if(error){if(error.code!=='PGRST116')console.warn('sbGetFavorites error',error);return null;}
+  return data?.product_ids||[];
+}
+async function sbSaveFavorites(userId,ids){
+  const {error}=await _supabase.from('favorites').upsert({user_id:userId,product_ids:ids},{onConflict:'user_id'});
+  if(error)console.warn('sbSaveFavorites error',error);
+}
+
+/* Загрузка начальных данных из Supabase с fallback на localStorage */
+async function initSupabaseData(){
+  const uid=getTgUserId();
+  /* Products */
+  const sbProds=await sbGetProducts();
+  if(sbProds&&sbProds.length){
+    products=sbProds;
+    localStorage.setItem('products',JSON.stringify(products));
+  } else {
+    /* Если в Supabase пусто — загружаем дефолтные и пишем туда */
+    products=JSON.parse(localStorage.getItem('products')||'null')||defaultProducts;
+    await sbSaveProducts(products);
+  }
+  /* Orders */
+  const sbOrds=await sbGetOrders();
+  if(sbOrds!==null){
+    localStorage.setItem('orders',JSON.stringify(sbOrds));
+  }
+  /* Settings */
+  const sbSet=await sbGetSettings(uid);
+  if(sbSet){
+    Object.assign(settings,sbSet);
+    localStorage.setItem('appSettings',JSON.stringify(settings));
+  }
+  /* Bot config */
+  const sbBot=await sbGetBotConfig();
+  if(sbBot){
+    localStorage.setItem('botConfig',JSON.stringify({token:sbBot.token||'',chatId:sbBot.chat_id||''}));
+  }
+  /* Favorites */
+  const sbFavs=await sbGetFavorites(uid);
+  if(sbFavs&&sbFavs.length){
+    localStorage.setItem('favorites',JSON.stringify(sbFavs));
+  }
+
+  renderProducts();
+  applySettings();
+  renderOrders();
+  updateNavBadge();
+}
+</script>
 <style>
 :root{
   --bg:#0b090c;--surface:#161217;--surface2:#1c171d;--border:rgba(255,255,255,.07);
@@ -841,7 +965,9 @@ function getBotConfig(){return JSON.parse(localStorage.getItem('botConfig')||'{}
 function saveBotConfig(){
   const token=document.getElementById('botToken').value.trim();
   const chatId=document.getElementById('adminChatId').value.trim();
-  localStorage.setItem('botConfig',JSON.stringify({token,chatId}));
+  const cfg={token,chatId};
+  localStorage.setItem('botConfig',JSON.stringify(cfg));
+  sbSaveBotConfig({token,chat_id:chatId}).catch(e=>console.warn(e));
   showToast('Настройки бота сохранены ✓');
 }
 function loadBotConfigUI(){
@@ -937,7 +1063,11 @@ const defaultProducts=[
     variantLabel:'Комплектация',variants:[{name:'1 шт',stock:30},{name:'3 шт',stock:14}]},
 ];
 function getProducts(){return JSON.parse(localStorage.getItem('products')||'null')||defaultProducts;}
-function saveProducts(p){localStorage.setItem('products',JSON.stringify(p));}
+function saveProducts(p){
+  localStorage.setItem('products',JSON.stringify(p));
+  /* Синхронизируем в Supabase (fire-and-forget) */
+  sbSaveProducts(p).catch(e=>console.warn(e));
+}
 let products=getProducts();
 
 /* ===== THEMES ===== */
@@ -1380,7 +1510,9 @@ let favorites=JSON.parse(localStorage.getItem('favorites')||'[]');
 function isFav(id){return favorites.includes(id);}
 function toggleFav(id){
   const idx=favorites.indexOf(id);if(idx>-1)favorites.splice(idx,1);else favorites.push(id);
-  localStorage.setItem('favorites',JSON.stringify(favorites));syncFavButtons(id);haptic('light');
+  localStorage.setItem('favorites',JSON.stringify(favorites));
+  sbSaveFavorites(getTgUserId(),favorites).catch(e=>console.warn(e));
+  syncFavButtons(id);haptic('light');
 }
 function syncFavButtons(id){
   document.querySelectorAll(`.fav-btn[data-id="${id}"],.fav-inline[data-id="${id}"]`).forEach(b=>b.classList.toggle('active',isFav(id)));
@@ -1553,7 +1685,10 @@ function renderCart(){
 
 /* ===== ORDERS ===== */
 function getOrders(){return JSON.parse(localStorage.getItem('orders')||'[]');}
-function saveOrders(o){localStorage.setItem('orders',JSON.stringify(o));}
+function saveOrders(o){
+  localStorage.setItem('orders',JSON.stringify(o));
+  sbSaveAllOrders(o).catch(e=>console.warn(e));
+}
 function renderOrders(){
   const orders=getOrders();const wrap=document.getElementById('ordersList');
   if(!orders.length){wrap.innerHTML=`<div class="order-card" style="text-align:center;color:var(--muted);font-family:var(--font-body);">Заказов пока нет</div>`;return;}
@@ -1582,7 +1717,10 @@ function renderOrders(){
 
 /* ===== SETTINGS ===== */
 const settings=Object.assign({density:'comfortable',view:'grid',radius:'soft',theme:'ember',bg:'aurora',bgspeed:'normal',blur:'on',shadow:'on',anim:'on',haptic:'on',lowpower:'off'},JSON.parse(localStorage.getItem('appSettings')||'{}'));
-function saveSettings(){localStorage.setItem('appSettings',JSON.stringify(settings));}
+function saveSettings(){
+  localStorage.setItem('appSettings',JSON.stringify(settings));
+  sbSaveSettings(getTgUserId(),settings).catch(e=>console.warn(e));
+}
 const swatchGroup=document.getElementById('swatchGroup');
 Object.keys(themeColors).forEach(key=>{
   const{c,name}=themeColors[key];const sw=document.createElement('button');
@@ -1660,8 +1798,11 @@ function animateGrain(){
 }
 
 /* ===== INIT ===== */
+/* Сначала рендерим из localStorage (мгновенно), затем обновляем из Supabase */
 renderProducts();applySettings();updateNavBadge();
 requestAnimationFrame(()=>{updateNavHighlight(false);updateTabsHighlight(false);});
+/* Асинхронно синхронизируем с Supabase */
+initSupabaseData().catch(e=>console.warn('Supabase init error:',e));
 </script>
 </body>
 </html>
