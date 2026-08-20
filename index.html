@@ -19,10 +19,10 @@ const JB_KEY   = '$2a$10$8TvNm1wETog3LgHDfTikb.ib2CaUg1KD.V6QYar8EqP0UgDaPv1HS';
 const JB_BIN_PRODUCTS  = '6a874e29f5f4af5e292e21a6';  // bin ID для товаров
 const JB_BIN_ORDERS    = '6a874e6ada38895dfefc8e9f';     // bin ID для заказов
 const JB_BIN_CONFIG    = '6a874e84f5f4af5e292e22d6';     // bin ID для бот
-const JB_BIN_BLOCKED='6a875631da38895dfefcaa90';
 
-const JB_BASE = 'https://api.jsonbin.io/v3/b';
-const JB_HDR  = {'Content-Type':'application/json','X-Master-Key':JB_KEY,'X-Bin-Meta':'false'};
+
+const JB_BASE = 'https://api.json.io/v3/b';
+const JB_HDR  = {'Content-Type':'application/json','X-Master-Key':JB_KEY,'X--Meta':'false'};
 
 /* Telegram user id (используется локально для избранного/настроек) */
 function getTgUserId(){
@@ -1837,7 +1837,7 @@ function animateGrain(){
 }
 
 /* ===== BLOCKED USERS ===== */
-const JB_BIN_BLOCKED='ЗАМЕНИТЕ_BIN_ID_BLOCKED';/* Создайте ещё один бин {"blocked":[]} */
+const JB_BIN_BLOCKED='6a875631da38895dfefcaa90';/* Создайте ещё один бин {"blocked":[]} */
 
 async function getBlockedList(){
   try{
