@@ -9,119 +9,135 @@
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-/* ===== SUPABASE CONFIG ===== */
-/* 🔧 ЗАМЕНИТЕ НА СВОИ ДАННЫЕ ИЗ SUPABASE → Project Settings → API */
-const SUPABASE_URL = 'https://fizstpcmnpxpjaopsrcd.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_qQUH_IzDlKCXS4yQMn75sQ_9xST3czj';
-const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+/* ===== JSONBIN CONFIG ===== */
+/* 🔧 ЗАМЕНИТЕ НА СВОИ ДАННЫЕ:
+   1. Зарегистрируйтесь на https://jsonbin.io
+   2. Создайте три бина (Products, Orders, BotConfig) — кнопка "New Bin"
+   3. Скопируйте BIN ID и API Key сюда                              */
+const JB_KEY   = '$2a$10$8TvNm1wETog3LgHDfTikb.ib2CaUg1KD.V6QYar8EqP0UgDaPv1HS';   // Master Key из Account → API Keys
+const JB_BIN_PRODUCTS  = '6a874e29f5f4af5e292e21a6';  // bin ID для товаров
+const JB_BIN_ORDERS    = '6a874e6ada38895dfefc8e9f';     // bin ID для заказов
+const JB_BIN_CONFIG    = '6a874e84f5f4af5e292e22d6';     // bin ID для бот-конфига
 
-/* Telegram user id (используется как ключ настроек пользователя) */
+const JB_BASE = 'https://api.jsonbin.io/v3/b';
+const JB_HDR  = {'Content-Type':'application/json','X-Master-Key':JB_KEY,'X-Bin-Meta':'false'};
+
+/* Telegram user id (используется локально для избранного/настроек) */
 function getTgUserId(){
   return String(window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'guest');
 }
 
-/* ===== SUPABASE HELPERS ===== */
+/* ===== JSONBIN LOW-LEVEL ===== */
+async function jbGet(binId){
+  try{
+    const r=await fetch(`${JB_BASE}/${binId}/latest`,{headers:JB_HDR});
+    if(!r.ok)throw new Error(r.status);
+    return await r.json();
+  }catch(e){console.warn('jbGet error',binId,e);return null;}
+}
+async function jbPut(binId,data){
+  try{
+    const r=await fetch(`${JB_BASE}/${binId}`,{method:'PUT',headers:JB_HDR,body:JSON.stringify(data)});
+    if(!r.ok)throw new Error(r.status);
+  }catch(e){console.warn('jbPut error',binId,e);}
+}
 
-/* --- PRODUCTS --- */
+/* Очередь записи — чтобы не перезаписывать параллельно */
+const _writeQueue={};
+async function jbPutQueued(binId,data){
+  _writeQueue[binId]=(_writeQueue[binId]||Promise.resolve()).then(()=>jbPut(binId,data));
+  return _writeQueue[binId];
+}
+
+/* ===== PRODUCTS ===== */
 async function sbGetProducts(){
-  const {data,error}=await _supabase.from('products').select('*').order('id');
-  if(error){console.warn('sbGetProducts error',error);return null;}
-  return data;
+  const d=await jbGet(JB_BIN_PRODUCTS);
+  return Array.isArray(d)?d:null;
 }
 async function sbSaveProducts(arr){
-  /* upsert всего массива */
-  const {error}=await _supabase.from('products').upsert(arr,{onConflict:'id'});
-  if(error)console.warn('sbSaveProducts error',error);
+  await jbPutQueued(JB_BIN_PRODUCTS,arr);
 }
-async function sbDeleteProduct(id){
-  const {error}=await _supabase.from('products').delete().eq('id',id);
-  if(error)console.warn('sbDeleteProduct error',error);
-}
-async function sbUpsertProduct(prod){
-  const {error}=await _supabase.from('products').upsert(prod,{onConflict:'id'});
-  if(error)console.warn('sbUpsertProduct error',error);
-}
+async function sbDeleteProduct(){/* not needed — saveProducts overwrites */}
+async function sbUpsertProduct(){/* not needed */}
 
-/* --- ORDERS --- */
+/* ===== ORDERS ===== */
 async function sbGetOrders(){
-  const {data,error}=await _supabase.from('orders').select('*').order('id',{ascending:false});
-  if(error){console.warn('sbGetOrders error',error);return null;}
-  return data;
+  const d=await jbGet(JB_BIN_ORDERS);
+  return Array.isArray(d)?d:null;
 }
 async function sbSaveOrder(order){
-  const {error}=await _supabase.from('orders').upsert(order,{onConflict:'id'});
-  if(error)console.warn('sbSaveOrder error',error);
+  /* merge single order into list */
+  const d=await jbGet(JB_BIN_ORDERS)||[];
+  const idx=d.findIndex(o=>o.id===order.id);
+  if(idx>-1)d[idx]=order;else d.unshift(order);
+  await jbPutQueued(JB_BIN_ORDERS,d);
 }
 async function sbSaveAllOrders(arr){
-  const {error}=await _supabase.from('orders').upsert(arr,{onConflict:'id'});
-  if(error)console.warn('sbSaveAllOrders error',error);
+  await jbPutQueued(JB_BIN_ORDERS,arr);
 }
 
-/* --- SETTINGS (per-user) --- */
+/* ===== SETTINGS (per-user, localStorage only — приватны) ===== */
 async function sbGetSettings(userId){
-  const {data,error}=await _supabase.from('user_settings').select('settings').eq('user_id',userId).single();
-  if(error){if(error.code!=='PGRST116')console.warn('sbGetSettings error',error);return null;}
-  return data?.settings||null;
+  const all=JSON.parse(localStorage.getItem('_allSettings')||'{}');
+  return all[userId]||null;
 }
 async function sbSaveSettings(userId,settingsObj){
-  const {error}=await _supabase.from('user_settings').upsert({user_id:userId,settings:settingsObj},{onConflict:'user_id'});
-  if(error)console.warn('sbSaveSettings error',error);
+  const all=JSON.parse(localStorage.getItem('_allSettings')||'{}');
+  all[userId]=settingsObj;
+  localStorage.setItem('_allSettings',JSON.stringify(all));
 }
 
-/* --- BOT CONFIG --- */
+/* ===== BOT CONFIG ===== */
 async function sbGetBotConfig(){
-  const {data,error}=await _supabase.from('bot_config').select('*').eq('id',1).single();
-  if(error){if(error.code!=='PGRST116')console.warn('sbGetBotConfig error',error);return null;}
-  return data||null;
+  const d=await jbGet(JB_BIN_CONFIG);
+  return d&&typeof d==='object'?d:null;
 }
 async function sbSaveBotConfig(cfg){
-  const {error}=await _supabase.from('bot_config').upsert({id:1,...cfg},{onConflict:'id'});
-  if(error)console.warn('sbSaveBotConfig error',error);
+  const cur=await jbGet(JB_BIN_CONFIG)||{};
+  await jbPutQueued(JB_BIN_CONFIG,{...cur,...cfg});
 }
 
-/* --- FAVORITES (per-user) --- */
+/* ===== FAVORITES (localStorage, per device) ===== */
 async function sbGetFavorites(userId){
-  const {data,error}=await _supabase.from('favorites').select('product_ids').eq('user_id',userId).single();
-  if(error){if(error.code!=='PGRST116')console.warn('sbGetFavorites error',error);return null;}
-  return data?.product_ids||[];
+  const all=JSON.parse(localStorage.getItem('_allFavs')||'{}');
+  return all[userId]||[];
 }
 async function sbSaveFavorites(userId,ids){
-  const {error}=await _supabase.from('favorites').upsert({user_id:userId,product_ids:ids},{onConflict:'user_id'});
-  if(error)console.warn('sbSaveFavorites error',error);
+  const all=JSON.parse(localStorage.getItem('_allFavs')||'{}');
+  all[userId]=ids;
+  localStorage.setItem('_allFavs',JSON.stringify(all));
 }
 
-/* Загрузка начальных данных из Supabase с fallback на localStorage */
+/* ===== INIT ===== */
 async function initSupabaseData(){
-  const uid=getTgUserId();
-  /* Products */
+  /* Products — общая база JSONBin */
   const sbProds=await sbGetProducts();
   if(sbProds&&sbProds.length){
     products=sbProds;
     localStorage.setItem('products',JSON.stringify(products));
   } else {
-    /* Если в Supabase пусто — загружаем дефолтные и пишем туда */
     products=JSON.parse(localStorage.getItem('products')||'null')||defaultProducts;
     await sbSaveProducts(products);
   }
-  /* Orders */
+  /* Orders — общая база JSONBin */
   const sbOrds=await sbGetOrders();
   if(sbOrds!==null){
     localStorage.setItem('orders',JSON.stringify(sbOrds));
   }
-  /* Settings */
+  /* Settings — localStorage */
+  const uid=getTgUserId();
   const sbSet=await sbGetSettings(uid);
   if(sbSet){
     Object.assign(settings,sbSet);
     localStorage.setItem('appSettings',JSON.stringify(settings));
   }
-  /* Bot config */
+  /* Bot config — JSONBin */
   const sbBot=await sbGetBotConfig();
   if(sbBot){
     localStorage.setItem('botConfig',JSON.stringify({token:sbBot.token||'',chatId:sbBot.chat_id||''}));
   }
-  /* Favorites */
+  /* Favorites — localStorage */
   const sbFavs=await sbGetFavorites(uid);
   if(sbFavs&&sbFavs.length){
     localStorage.setItem('favorites',JSON.stringify(sbFavs));
@@ -1798,11 +1814,11 @@ function animateGrain(){
 }
 
 /* ===== INIT ===== */
-/* Сначала рендерим из localStorage (мгновенно), затем обновляем из Supabase */
+/* Сначала рендерим из localStorage (мгновенно), затем синхронизируем с JSONBin */
 renderProducts();applySettings();updateNavBadge();
 requestAnimationFrame(()=>{updateNavHighlight(false);updateTabsHighlight(false);});
-/* Асинхронно синхронизируем с Supabase */
-initSupabaseData().catch(e=>console.warn('Supabase init error:',e));
+/* Асинхронно синхронизируем с JSONBin */
+initSupabaseData().catch(e=>console.warn('JSONBin init error:',e));
 </script>
 </body>
 </html>
