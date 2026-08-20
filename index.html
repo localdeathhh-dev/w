@@ -990,22 +990,35 @@ function loadBotConfigUI(){
 /* ===== TELEGRAM BOT API ===== */
 async function sendTelegramMessage(chatId,text){
   const cfg=getBotConfig();
-  if(!cfg.token||!chatId)return;
+  if(!cfg.token||!chatId){console.warn('sendTelegramMessage: missing token or chatId',{token:!!cfg.token,chatId});return;}
   try{
-    await fetch(`https://api.telegram.org/bot${cfg.token}/sendMessage`,{
+    const r=await fetch(`https://api.telegram.org/bot${cfg.token}/sendMessage`,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({chat_id:chatId,text,parse_mode:'HTML'})
+      body:JSON.stringify({chat_id:String(chatId),text,parse_mode:'HTML'})
     });
+    const json=await r.json();
+    if(!json.ok)console.warn('Telegram API error:',json);
+    return json;
   }catch(e){console.warn('Telegram send failed:',e);}
 }
 
 async function notifyAdmin(order){
-  const cfg=getBotConfig();if(!cfg.chatId)return;
+  /* Берём конфиг из localStorage, если пустой — пробуем свежий из JSONBin */
+  let cfg=getBotConfig();
+  if(!cfg.token||!cfg.chatId){
+    const remote=await sbGetBotConfig().catch(()=>null);
+    if(remote&&remote.token&&remote.chat_id){
+      cfg={token:remote.token,chatId:remote.chat_id};
+      localStorage.setItem('botConfig',JSON.stringify(cfg));
+    }
+  }
+  if(!cfg.token||!cfg.chatId){console.warn('notifyAdmin: нет токена или chatId');return;}
   const items=order.items.map(i=>`• ${i.title} (${i.variant}) × ${i.qty} = ${i.price*i.qty}₽`).join('\n');
   const delivery=order.delivery==='delivery'?`🚚 Доставка: ${order.address}`:'🏪 Самовывоз';
   const text=`🆕 <b>Новый заказ #${order.id.toString().slice(-6)}</b>\n\n👤 ${order.clientName}\n📞 ${order.phone}\n${delivery}\n🕐 ${order.time||'—'}\n\n<b>Состав:</b>\n${items}\n\n💰 <b>Итого: ${order.total}₽</b>`;
-  await sendTelegramMessage(cfg.chatId,text);
+  const result=await sendTelegramMessage(cfg.chatId,text);
+  console.log('notifyAdmin sent, chatId='+cfg.chatId);
 }
 
 async function notifyClient(order,newStatus){
