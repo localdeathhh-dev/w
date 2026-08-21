@@ -130,7 +130,9 @@ async function initSupabaseData(){
   if(sbSet){Object.assign(settings,sbSet);localStorage.setItem('appSettings',JSON.stringify(settings));}
   const sbBot=await sbGetBotConfig();
   if(sbBot&&typeof sbBot==='object'&&!sbBot.init){
-    localStorage.setItem('botConfig',JSON.stringify({token:sbBot.token||'',chatId:sbBot.chat_id||''}));
+    const ids=Array.isArray(sbBot.chat_ids)?sbBot.chat_ids:(sbBot.chat_id?[sbBot.chat_id]:[]);
+    localStorage.setItem('botConfig',JSON.stringify({token:sbBot.token||'',chatId:sbBot.chat_id||'',chatIds:ids}));
+    if(sbBot.admin_pass)localStorage.setItem('adminPass',sbBot.admin_pass);
   }
   const sbFavs=await sbGetFavorites(uid);
   if(sbFavs&&sbFavs.length){localStorage.setItem('favorites',JSON.stringify(sbFavs));}
@@ -494,8 +496,9 @@ body.no-shadow .nav-highlight{box-shadow:none;}
   padding:9px 12px;color:#fff;font-size:.78rem;font-family:var(--font-body);outline:none;}
 .bot-save-btn{padding:9px 14px;border-radius:10px;border:none;background:var(--grad);color:#fff;font-size:.72rem;font-weight:600;cursor:pointer;font-family:var(--font-display);white-space:nowrap;}
 
-.admin-tabs{display:flex;gap:0;padding:14px 16px 0;border-bottom:1px solid var(--border);}
-.admin-tab{padding:10px 16px;font-family:var(--font-display);font-size:.72rem;font-weight:600;
+.admin-tabs{display:flex;gap:0;padding:14px 16px 0;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;flex-shrink:0;}
+.admin-tabs::-webkit-scrollbar{display:none;}
+.admin-tab{padding:10px 14px;font-family:var(--font-display);font-size:.72rem;font-weight:600;white-space:nowrap;flex-shrink:0;
   color:var(--muted);cursor:pointer;border:none;background:transparent;border-bottom:2px solid transparent;transition:.2s;}
 .admin-tab.active{color:#fff;border-bottom-color:var(--accent-1);}
 .admin-content{flex:1;overflow-y:auto;padding:16px;}
@@ -582,6 +585,19 @@ body.no-shadow .nav-highlight{box-shadow:none;}
   color:var(--muted);font-size:.68rem;font-weight:600;cursor:pointer;font-family:var(--font-display);transition:.2s;}
 .chart-period-btn.active{background:var(--grad);color:#fff;border-color:transparent;}
 .chart-wrap{position:relative;height:180px;}
+
+.filter-toggle-btn{background:transparent;border:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:2px 4px;transition:color .2s;}
+.filter-toggle-btn.active{color:var(--accent-1);}
+.filter-bar{padding:0 16px 14px;display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;background:var(--surface-0);border-bottom:1px solid var(--border);}
+.filter-group{display:flex;flex-direction:column;gap:4px;}
+.filter-label{font-size:.7rem;font-family:var(--font-display);font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+.filter-input{background:var(--surface-1);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:.82rem;padding:6px 10px;width:72px;outline:none;}
+.filter-select{background:var(--surface-1);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:.82rem;padding:6px 10px;outline:none;}
+.filter-reset-btn{background:rgba(255,60,60,.12);color:#ff6060;border:none;border-radius:8px;padding:6px 14px;font-size:.75rem;font-family:var(--font-display);font-weight:600;cursor:pointer;align-self:flex-end;}
+.profile-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.7rem;font-family:var(--font-display);font-weight:700;letter-spacing:.04em;}
+.badge-tester{background:rgba(var(--accent-1-rgb),.15);color:var(--accent-1);}
+.badge-owner{background:linear-gradient(135deg,rgba(255,200,0,.2),rgba(255,140,0,.2));color:#ffb300;border:1px solid rgba(255,180,0,.3);}
+.badge-tech{background:rgba(100,200,255,.12);color:#64c8ff;border:1px solid rgba(100,200,255,.2);}
 </style>
 </head>
 <body class="bg-aurora bg-on">
@@ -660,8 +676,8 @@ body.no-shadow .nav-highlight{box-shadow:none;}
       <button class="admin-tab active" onclick="switchAdminTab('products',this)">📦 Товары</button>
       <button class="admin-tab" onclick="switchAdminTab('orders',this)">📋 Заказы</button>
       <button class="admin-tab" onclick="switchAdminTab('accounting',this)">💰 Бухгалтерия</button>
-      <button class="admin-tab" onclick="switchAdminTab('botconfig',this)">🤖 Бот</button>
       <button class="admin-tab" onclick="switchAdminTab('users',this)">🚫 Пользователи</button>
+      <button class="admin-tab" onclick="switchAdminTab('botconfig',this)">🤖 Бот & Рассылка</button>
     </div>
     <div class="admin-content">
       <!-- PRODUCTS -->
@@ -740,14 +756,27 @@ body.no-shadow .nav-highlight{box-shadow:none;}
       <div class="admin-section" id="admin-botconfig">
         <div class="bot-config-banner">
           <h4>🤖 Настройка Telegram бота</h4>
-          <p>Введите токен вашего бота и ID для получения уведомлений о новых заказах. Клиенты получат уведомление при смене статуса автоматически.</p>
+          <p>Токен бота и список ID для уведомлений о новых заказах.</p>
           <label class="a-label" style="margin-top:8px;">Токен бота (@BotFather)</label>
           <input class="bot-config-input" id="botToken" placeholder="1234567890:AAF..." style="width:100%;margin-bottom:10px;">
-          <label class="a-label">ID</label>
-          <div class="bot-config-row">
-            <input class="bot-config-input" id="adminChatId" placeholder="123456789">
-            <button class="bot-save-btn" onclick="saveBotConfig()">Сохранить</button>
-          </div>
+          <label class="a-label">ID администраторов <span style="color:var(--muted);font-size:.75rem;">(через запятую или с новой строки)</span></label>
+          <textarea class="bot-config-input" id="adminChatId" placeholder="123456789&#10;987654321" rows="3" style="width:100%;resize:vertical;margin-bottom:10px;"></textarea>
+          <button class="bot-save-btn" style="width:100%;margin-bottom:16px;" onclick="saveBotConfig()">💾 Сохранить настройки бота</button>
+        </div>
+        <div class="bot-config-banner" style="margin-top:16px;">
+          <h4>🔐 Смена пароля админ-панели</h4>
+          <input class="bot-config-input" id="oldPass" type="password" placeholder="Текущий пароль" style="width:100%;margin-bottom:8px;">
+          <input class="bot-config-input" id="newPass1" type="password" placeholder="Новый пароль" style="width:100%;margin-bottom:8px;">
+          <input class="bot-config-input" id="newPass2" type="password" placeholder="Повторите новый пароль" style="width:100%;margin-bottom:10px;">
+          <button class="bot-save-btn" style="width:100%;" onclick="changeAdminPassword()">🔐 Сменить пароль</button>
+        </div>
+        <div class="bot-config-banner" style="margin-top:16px;">
+          <h4>📢 Рассылка уведомлений</h4>
+          <p>Отправить сообщение всем или конкретному пользователю.</p>
+          <textarea class="bot-config-input" id="broadcastText" placeholder="Текст уведомления..." rows="3" style="width:100%;resize:vertical;margin-bottom:8px;"></textarea>
+          <input class="bot-config-input" id="broadcastTarget" placeholder="ID пользователя (пусто = всем)" style="width:100%;margin-bottom:10px;">
+          <button class="bot-save-btn" style="width:100%;" onclick="sendBroadcast()">📤 Отправить</button>
+          <div id="broadcastStatus" style="margin-top:8px;font-size:.78rem;color:var(--muted);font-family:var(--font-body);"></div>
         </div>
 
       <div class="bot-config-banner" style="margin-top:16px;">
@@ -807,6 +836,34 @@ body.no-shadow .nav-highlight{box-shadow:none;}
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="text" id="searchInput" placeholder="Поиск по товарам...">
       <button class="search-clear" id="searchClear" style="display:none;">×</button>
+      <button class="filter-toggle-btn" id="filterToggleBtn" onclick="toggleFilters()" title="Фильтры">⚙</button>
+    </div>
+    <div class="filter-bar" id="filterBar" style="display:none;">
+      <div class="filter-group">
+        <label class="filter-label">Цена</label>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input class="filter-input" id="fPriceMin" type="number" placeholder="от" oninput="renderProducts()">
+          <span style="color:var(--muted);font-size:.8rem;">—</span>
+          <input class="filter-input" id="fPriceMax" type="number" placeholder="до" oninput="renderProducts()">
+        </div>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label">Сортировка</label>
+        <select class="filter-select" id="fSort" onchange="renderProducts()">
+          <option value="">По умолчанию</option>
+          <option value="price_asc">Цена ↑</option>
+          <option value="price_desc">Цена ↓</option>
+          <option value="name_asc">А → Я</option>
+          <option value="name_desc">Я → А</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label">Наличие</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.82rem;color:var(--muted);font-family:var(--font-body);">
+          <input type="checkbox" id="fInStock" onchange="renderProducts()" style="accent-color:var(--accent-1);"> Только в наличии
+        </label>
+      </div>
+      <button class="filter-reset-btn" onclick="resetFilters()">Сбросить</button>
     </div>
     <div class="tabs" id="tabsWrap">
       <div class="tabs-highlight" id="tabsHighlight"></div>
@@ -875,7 +932,7 @@ body.no-shadow .nav-highlight{box-shadow:none;}
     <div class="shop-header"><div><div class="shop-sub">АККАУНТ</div><h1 style="font-size:1.15rem;margin-top:2px;">Профиль</h1></div></div>
     <div class="profile-card">
       <div class="avatar" id="avatarLetter">Г</div>
-      <div><div class="pname" id="profileName">Гость</div><div class="pusername" id="profileUsername">Telegram пользователь</div></div>
+      <div><div class="pname" id="profileName">Гость</div><div class="pusername" id="profileUsername">Telegram пользователь</div><div id="profileBadge" style="display:none;margin-top:6px;"></div></div>
     </div>
     <div class="menu-list">
       <div class="menu-row" onclick="goTo('favorites')"><div class="m-icon">♥</div><div class="m-label">Избранное</div><div class="chevron">›</div></div>
@@ -988,16 +1045,20 @@ function showToast(msg,dur=2200){
 function getBotConfig(){return JSON.parse(localStorage.getItem('botConfig')||'{}');}
 function saveBotConfig(){
   const token=document.getElementById('botToken').value.trim();
-  const chatId=document.getElementById('adminChatId').value.trim();
-  const cfg={token,chatId};
+  const rawIds=document.getElementById('adminChatId').value;
+  /* Parse comma or newline separated IDs */
+  const chatIds=rawIds.split(/[,\n]/).map(s=>s.trim()).filter(Boolean);
+  const chatId=chatIds[0]||'';
+  const cfg={token,chatId,chatIds};
   localStorage.setItem('botConfig',JSON.stringify(cfg));
-  sbSaveBotConfig({token,chat_id:chatId}).catch(e=>console.warn(e));
+  sbSaveBotConfig({token,chat_id:chatId,chat_ids:chatIds}).catch(e=>console.warn(e));
   showToast('Настройки бота сохранены ✓');
 }
 function loadBotConfigUI(){
   const cfg=getBotConfig();
   if(cfg.token)document.getElementById('botToken').value=cfg.token;
-  if(cfg.chatId)document.getElementById('adminChatId').value=cfg.chatId;
+  const ids=cfg.chatIds&&cfg.chatIds.length?cfg.chatIds:(cfg.chatId?[cfg.chatId]:[]);
+  document.getElementById('adminChatId').value=ids.join('\n');
 }
 
 /* ===== TELEGRAM BOT API ===== */
@@ -1030,8 +1091,9 @@ async function notifyAdmin(order){
   const items=order.items.map(i=>`• ${i.title} (${i.variant}) × ${i.qty} = ${i.price*i.qty}₽`).join('\n');
   const delivery=order.delivery==='delivery'?`🚚 Доставка: ${order.address}`:'🏪 Самовывоз';
   const text=`🆕 <b>Новый заказ #${order.id.toString().slice(-6)}</b>\n\n👤 ${order.clientName}\n📞 ${order.phone}\n${delivery}\n🕐 ${order.time||'—'}\n\n<b>Состав:</b>\n${items}\n\n💰 <b>Итого: ${order.total}₽</b>`;
-  const result=await sendTelegramMessage(cfg.chatId,text);
-  console.log('notifyAdmin sent, chatId='+cfg.chatId);
+  const ids=cfg.chatIds&&cfg.chatIds.length?cfg.chatIds:(cfg.chatId?[cfg.chatId]:[]);
+  for(const id of ids){await sendTelegramMessage(id,text);}
+  console.log('notifyAdmin sent to',ids.length,'admins');
 }
 
 async function notifyClient(order,newStatus){
@@ -1534,7 +1596,7 @@ async function submitOrder(){
     date:new Date().toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}),
     items:cart,total,clientName:name,phone,delivery:deliveryType,
     address:deliveryType==='delivery'?address:'',time,status:'processing',
-    clientTgId:tgUser?.id||null
+    clientTgId:tgUser?.id||null,userId:getTgUserId()
   };
   const orders=getOrders();orders.unshift(order);saveOrders(orders);sbSaveOrder(order).catch(e=>console.warn(e));
   saveCart([]);renderCart();closeOrderModal();
@@ -1594,10 +1656,36 @@ function renderCardsInto(container,list,isFavPage=false){
 function renderProducts(){
   products=getProducts();let list=products;
   if(currentTab!=='all')list=list.filter(p=>p.category===currentTab);
-  if(searchQuery.trim())list=list.filter(p=>p.title.toLowerCase().includes(searchQuery.trim().toLowerCase()));
+  if(searchQuery.trim())list=list.filter(p=>(p.title||'').toLowerCase().includes(searchQuery.trim().toLowerCase())||(p.desc||'').toLowerCase().includes(searchQuery.trim().toLowerCase()));
+  /* filters */
+  const pMin=parseFloat(document.getElementById('fPriceMin')?.value||'');
+  const pMax=parseFloat(document.getElementById('fPriceMax')?.value||'');
+  const inStock=document.getElementById('fInStock')?.checked;
+  const sort=document.getElementById('fSort')?.value||'';
+  if(!isNaN(pMin)&&pMin>0)list=list.filter(p=>p.price>=pMin);
+  if(!isNaN(pMax)&&pMax>0)list=list.filter(p=>p.price<=pMax);
+  if(inStock)list=list.filter(p=>p.variants&&p.variants.some(v=>v.stock>0));
+  if(sort==='price_asc')list=[...list].sort((a,b)=>a.price-b.price);
+  else if(sort==='price_desc')list=[...list].sort((a,b)=>b.price-a.price);
+  else if(sort==='name_asc')list=[...list].sort((a,b)=>(a.title||'').localeCompare(b.title||''));
+  else if(sort==='name_desc')list=[...list].sort((a,b)=>(b.title||'').localeCompare(a.title||''));
   const titleMap={all:'Все товары',liquids:'Жидкости',devices:'Девайсы',parts:'Расходники'};
   document.getElementById('sectionTitleText').textContent=searchQuery.trim()?`Результаты: «${searchQuery.trim()}»`:titleMap[currentTab];
   renderCardsInto(document.getElementById('productGrid'),list);
+}
+function toggleFilters(){
+  const bar=document.getElementById('filterBar');
+  const btn=document.getElementById('filterToggleBtn');
+  const visible=bar.style.display!=='none';
+  bar.style.display=visible?'none':'flex';
+  btn.classList.toggle('active',!visible);
+}
+function resetFilters(){
+  const ids=['fPriceMin','fPriceMax'];
+  ids.forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  const fs=document.getElementById('fSort');if(fs)fs.value='';
+  const fi=document.getElementById('fInStock');if(fi)fi.checked=false;
+  renderProducts();
 }
 function quickAdd(p,btn){
   const v=p.variants.find(v=>v.stock>0);if(!v){showToast('Нет в наличии');return;}
@@ -1753,6 +1841,14 @@ function renderOrders(){
   document.getElementById('profileName').textContent=name;
   document.getElementById('profileUsername').textContent=user.username?'@'+user.username:'Telegram пользователь';
   document.getElementById('avatarLetter').textContent=name.charAt(0).toUpperCase();
+  /* Special badge */
+  const uid=String(user.id);
+  const sp=SPECIAL_USERS[uid];
+  if(sp){
+    const el=document.getElementById('profileBadge');
+    el.style.display='block';
+    el.innerHTML=`<span class="profile-badge ${sp.cls}">${sp.badge}</span>`;
+  }
 })();
 
 /* ===== SETTINGS ===== */
@@ -1904,6 +2000,52 @@ function renderBlockedList(list){
 async function loadUsersTab(){
   const list=await getBlockedList();
   renderBlockedList(list);
+}
+
+
+/* ===== ADMIN PASSWORD CHANGE ===== */
+function getAdminPassword(){return localStorage.getItem('adminPass')||'admin';}
+function changeAdminPassword(){
+  const old=document.getElementById('oldPass').value;
+  const n1=document.getElementById('newPass1').value;
+  const n2=document.getElementById('newPass2').value;
+  if(old!==getAdminPassword()){showToast('Неверный текущий пароль');return;}
+  if(n1.length<4){showToast('Минимум 4 символа');return;}
+  if(n1!==n2){showToast('Пароли не совпадают');return;}
+  localStorage.setItem('adminPass',n1);
+  sbSaveBotConfig({admin_pass:n1}).catch(e=>console.warn(e));
+  document.getElementById('oldPass').value='';
+  document.getElementById('newPass1').value='';
+  document.getElementById('newPass2').value='';
+  showToast('Пароль изменён ✓');
+}
+
+/* ===== BROADCAST ===== */
+async function sendBroadcast(){
+  const text=document.getElementById('broadcastText').value.trim();
+  const target=document.getElementById('broadcastTarget').value.trim();
+  const st=document.getElementById('broadcastStatus');
+  if(!text){showToast('Введите текст');return;}
+  const cfg=getBotConfig();
+  if(!cfg.token){showToast('Сначала настройте бот');return;}
+  st.textContent='Отправка...';
+  if(target){
+    /* Single user */
+    const r=await sendTelegramMessage(target,'📢 <b>Сообщение от администратора</b>\n\n'+text);
+    st.textContent=r&&r.ok?'✓ Отправлено пользователю '+target:'❌ Ошибка: '+JSON.stringify(r);
+  } else {
+    /* All known order users */
+    const orders=getOrders();
+    const userIds=[...new Set(orders.map(o=>o.userId).filter(Boolean))];
+    if(!userIds.length){st.textContent='Нет пользователей (нет заказов с userId)';return;}
+    let ok=0,fail=0;
+    for(const uid of userIds){
+      const r=await sendTelegramMessage(uid,'📢 <b>Сообщение от администратора</b>\n\n'+text);
+      if(r&&r.ok)ok++;else fail++;
+    }
+    st.textContent=`✓ Отправлено: ${ok}, ошибок: ${fail}`;
+  }
+  document.getElementById('broadcastText').value='';
 }
 
 /* ===== FORCE SYNC / NUKE ===== */
