@@ -15,14 +15,15 @@
    1. Зарегистрируйтесь на https://jsonbin.io
    2. Создайте три бина (Products, Orders, BotConfig) — кнопка "New Bin"
    3. Скопируйте BIN ID и API Key сюда                              */
-const JB_KEY   = '$2a$10$8TvNm1wETog3LgHDfTikb.ib2CaUg1KD.V6QYar8EqP0UgDaPv1HS';   // Master Key из Account → API Keys
-const JB_BIN_PRODUCTS  = '6a874e29f5f4af5e292e21a6';  // bin ID для товаров
-const JB_BIN_ORDERS    = '6a874e6ada38895dfefc8e9f';     // bin ID для заказов
-const JB_BIN_CONFIG    = '6a874e84f5f4af5e292e22d6';     // bin ID для бот
+const JB_KEY   = '$2a$10$8TvNm1wETog3LgHDfTikb.ib2CaUg1KD.V6QYar8EqP0UgDaPv1HS';
+const JB_BIN_PRODUCTS  = '6a874e29f5f4af5e292e21a6';
+const JB_BIN_ORDERS    = '6a874e6ada38895dfefc8e9f';
+const JB_BIN_CONFIG    = '6a874e84f5f4af5e292e22d6';
 
-
-const JB_BASE = 'https://api.json.io/v3/b';
-const JB_HDR  = {'Content-Type':'application/json','X-Master-Key':JB_KEY,'X--Meta':'false'};
+const JB_BASE = 'https://api.jsonbin.io/v3/b';
+const JB_HDR_GET  = {'X-Bin-Meta':'false'};
+const JB_ACCESS_KEY='$2a$10$uZbaBO31ZS4PKWTGYLLDJOqKDgcS4s7JnTC2JFCB7ls5P0o8mjnNu';
+const JB_HDR_PUT  = {'Content-Type':'application/json','X-Master-Key':JB_KEY,'X-Access-Key':JB_ACCESS_KEY,'X-Bin-Meta':'false'};
 
 /* Telegram user id (используется локально для избранного/настроек) */
 function getTgUserId(){
@@ -32,14 +33,14 @@ function getTgUserId(){
 /* ===== JSONBIN LOW-LEVEL ===== */
 async function jbGet(binId){
   try{
-    const r=await fetch(`${JB_BASE}/${binId}/latest`,{headers:JB_HDR});
+    const r=await fetch(`${JB_BASE}/${binId}/latest`,{headers:JB_HDR_GET});
     if(!r.ok)throw new Error(r.status);
     return await r.json();
   }catch(e){console.warn('jbGet error',binId,e);return null;}
 }
 async function jbPut(binId,data){
   try{
-    const r=await fetch(`${JB_BASE}/${binId}`,{method:'PUT',headers:JB_HDR,body:JSON.stringify(data)});
+    const r=await fetch(`${JB_BASE}/${binId}`,{method:'PUT',headers:JB_HDR_PUT,body:JSON.stringify(data)});
     if(!r.ok)throw new Error(r.status);
   }catch(e){console.warn('jbPut error',binId,e);}
 }
@@ -1837,7 +1838,7 @@ function animateGrain(){
 }
 
 /* ===== BLOCKED USERS ===== */
-const JB_BIN_BLOCKED='6a875631da38895dfefcaa90';/* Создайте ещё один бин {"blocked":[]} */
+const JB_BIN_BLOCKED='6a875631da38895dfefcaa90';
 
 async function getBlockedList(){
   try{
